@@ -61,13 +61,9 @@ jobs:
       - name: Prepare release
         if: steps.check_version.outputs.has_update == 'true'
         run: |
+          echo "![](https://img.shields.io/github/downloads/${{ env.luci-app-bandix }}/v${{steps.check_version.outputs.latest_version}}/total?style=flat-square)" >> release.txt
           touch release.txt
-          echo "
-
-![](https://img.shields.io/github/downloads/${{ env.luci-app-bandix }}/v${{ steps.check_version.outputs.latest_version }}/total?style=flat-square)
-
-" >> release.txt
-
+          
       - name: Generate new tag & release
         if: steps.check_version.outputs.has_update == 'true'
         uses: softprops/action-gh-release@v2
