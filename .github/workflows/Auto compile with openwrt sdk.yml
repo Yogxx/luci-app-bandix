@@ -3,6 +3,7 @@
 # Description: Auto compile
 #
 name: "Auto compile with openwrt sdk"
+
 on:
   repository_dispatch:
   workflow_dispatch:
@@ -11,6 +12,7 @@ on:
         description: 'SSH connection to Actions'
         required: false
         default: 'false'
+
 env:
   TZ: Asia/Shanghai
   luci-app-bandix: ${{ github.repository }}
@@ -38,16 +40,16 @@ jobs:
           latest_version=$(awk -F ':=' '/^PKG_VERSION:=/ {print $2}' Makefile | tr -d ' \n')
           echo "latest_version=${latest_version}" >> $GITHUB_OUTPUT
 
-          remote_latest_version=$(wget -qO- -t1 -T2 ${{env.url_tags}} | jq -r '.tag_name')
+          remote_latest_version=$(wget -qO- -t1 -T2 ${{ env.url_tags }} | jq -r '.tag_name')
 
           if [ -z "$remote_latest_version" ] || [ "$remote_latest_version" = "null" ]; then
-            echo "Failed to fetch remote tags"
+            echo "Failed to fetch remote version"
             echo "has_update=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           echo "Remote latest: $remote_latest_version"
-          
-          # 去掉远程版本的 v 前缀进行比较
+
+          # Strip 'v' prefix before comparing
           remote_version_without_v=${remote_latest_version#v}
 
           if [ "$latest_version" = "$remote_version_without_v" ]; then
@@ -56,12 +58,15 @@ jobs:
             echo "has_update=true" >> $GITHUB_OUTPUT
           fi
 
-
       - name: Prepare release
         if: steps.check_version.outputs.has_update == 'true'
         run: |
-          echo "![](https://img.shields.io/github/downloads/${{ env.luci-app-bandix }}/v${{steps.check_version.outputs.latest_version}}/total?style=flat-square)" >> release.txt
           touch release.txt
+          echo "
+
+![](https://img.shields.io/github/downloads/${{ env.luci-app-bandix }}/v${{ steps.check_version.outputs.latest_version }}/total?style=flat-square)
+
+" >> release.txt
 
       - name: Generate new tag & release
         if: steps.check_version.outputs.has_update == 'true'
@@ -69,9 +74,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{steps.check_version.outputs.latest_version}}
+          tag_name: v${{ steps.check_version.outputs.latest_version }}
           target_commitish: ${{ github.ref_name }}
-          prerelease: ${{steps.check_version.outputs.prerelease}}
+          prerelease: ${{ steps.check_version.outputs.prerelease }}
           body_path: release.txt
 
 
@@ -88,11 +93,11 @@ jobs:
             sdk_url: https://downloads.openwrt.org/releases/24.10.1/targets/x86/64/openwrt-sdk-24.10.1-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
           - version: apk
             sdk_url: https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+
     steps:
       - name: Install packages
         run: |
           sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
-          echo "Install packages"
           sudo -E apt-get -qq update
           sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
@@ -104,55 +109,52 @@ jobs:
             upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
           sudo -E apt-get -qq autoremove --purge
 
-      - name: Initialization environment
+      - name: Initialize SDK environment
         run: |
           wget ${{ matrix.sdk_url }}
           file_name=$(echo ${{ matrix.sdk_url }} | awk -F/ '{print $NF}')
           mkdir sdk
-          if [[ $file_name == *.tar.xz ]]; then
-            tar -xJf $file_name -C ./sdk --strip-components=1
-          elif [[ $file_name == *.tar.zst ]]; then
-            tar --zstd -x -f $file_name -C ./sdk --strip-components=1
+          if [[ "$file_name" == *.tar.xz ]]; then
+            tar -xJf "$file_name" -C ./sdk --strip-components=1
+          elif [[ "$file_name" == *.tar.zst ]]; then
+            tar --zstd -xf "$file_name" -C ./sdk --strip-components=1
           else
-            echo "Unsupported file format: $file_name"
+            echo "Unsupported archive format: $file_name"
             exit 1
           fi
           cd sdk
 
+          # Clone package source
           rm -rf ./package/custom_packages
           mkdir -p ./package/custom_packages
           git clone https://github.com/timsaya/luci-app-bandix.git ./package/custom_packages/luci-app-bandix
 
-          # Update feeds to github source
+          # Redirect feeds to GitHub mirrors
           sed -i \
-              -e 's|git\.openwrt\.org/feed|github.com/openwrt|g' \
-              -e 's|git\.openwrt\.org/project|github.com/openwrt|g' \
-              -e 's|git\.openwrt\.org/openwrt|github.com/openwrt|g' \
-              "feeds.conf.default"
+            -e 's|git\.openwrt\.org/feed|github.com/openwrt|g' \
+            -e 's|git\.openwrt\.org/project|github.com/openwrt|g' \
+            -e 's|git\.openwrt\.org/openwrt|github.com/openwrt|g' \
+            feeds.conf.default
 
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-          #--------------------------------------begin_patches------------------------------------------
-          echo "Start applying the patch"
+          # ── Patches ──────────────────────────────────────────────────────────
+          echo "Applying patches..."
 
-          rm -rf temp_resp
+          # Update golang and rust from upstream packages
           git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
-          echo "update golang version"
-          rm -rf feeds/packages/lang/golang
-          cp -r temp_resp/lang/golang feeds/packages/lang
-          echo "update rust version"
-          rm -rf feeds/packages/lang/rust
-          cp -r temp_resp/lang/rust feeds/packages/lang
+          rm -rf feeds/packages/lang/golang && cp -r temp_resp/lang/golang feeds/packages/lang
+          rm -rf feeds/packages/lang/rust   && cp -r temp_resp/lang/rust   feeds/packages/lang
           rm -rf temp_resp
-          
-          echo "update patch-kernel.sh"
+
+          # Update patch-kernel.sh from upstream openwrt
           git clone -b main --single-branch https://github.com/openwrt/openwrt.git temp_resp
           cp -f temp_resp/scripts/patch-kernel.sh scripts/
           rm -rf temp_resp
 
-          echo "Patch application completed"
-          #--------------------------------------end_patches--------------------------------------------
+          echo "Patches applied successfully"
+          # ─────────────────────────────────────────────────────────────────────
 
       - name: Update source code
         run: |
@@ -164,48 +166,63 @@ jobs:
         id: compile
         run: |
           cd sdk
-          echo "CONFIG_ALL_NONSHARED=n" > .config
-          echo "CONFIG_ALL_KMODS=n" >> .config
-          echo "CONFIG_ALL=n" >> .config
-          echo "CONFIG_AUTOREMOVE=n" >> .config
-          echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
-          echo "CONFIG_LUCI_LANG_zh_Hant=y" >> .config
-          echo "CONFIG_LUCI_LANG_ja=y" >> .config
-          echo "CONFIG_LUCI_LANG_fr=y" >> .config
-          echo "CONFIG_LUCI_LANG_ru=y" >> .config
-          echo "CONFIG_LUCI_LANG_id=y" >> .config
-          echo "CONFIG_LUCI_LANG_pl=y" >> .config
-          echo "CONFIG_LUCI_LANG_th=y" >> .config
-          echo "CONFIG_LUCI_LANG_es=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-bandix=m" >> .config
-          
 
+          # Generate .config
+          cat >> .config <<'EOF'
+          CONFIG_ALL_NONSHARED=n
+          CONFIG_ALL_KMODS=n
+          CONFIG_ALL=n
+          CONFIG_AUTOREMOVE=n
+          CONFIG_LUCI_LANG_zh_Hans=y
+          CONFIG_LUCI_LANG_zh_Hant=y
+          CONFIG_LUCI_LANG_ja=y
+          CONFIG_LUCI_LANG_fr=y
+          CONFIG_LUCI_LANG_ru=y
+          CONFIG_LUCI_LANG_id=y
+          CONFIG_LUCI_LANG_pl=y
+          CONFIG_LUCI_LANG_th=y
+          CONFIG_LUCI_LANG_es=y
+          CONFIG_PACKAGE_luci-app-bandix=m
+          EOF
 
           make defconfig
           make package/custom_packages/luci-app-bandix/luci-app-bandix/compile -j$(nproc) V=s
+
+          # Collect output files
           mkdir upload
           mv bin/packages/*/base/luci-app-bandix* upload/
           mv bin/packages/*/base/luci-i18n-bandix* upload/
           cd upload
-          
-          # 重命名不包含 all 的文件，在扩展名前添加 _all
+
+          # Rename output files:
+          #   luci-app-bandix.apk       -> kept as-is
+          #   luci-app-bandix.ipk       -> luci-app-bandix_all.ipk
+          #   everything else           -> add _all suffix if missing
           for file in *; do
-            if [[ -f "$file" ]] && [[ ! "$file" =~ _all\. ]]; then
-              filename="${file%.*}"
-              extension="${file##*.}"
+            [[ -f "$file" ]] || continue
+            extension="${file##*.}"
+            filename="${file%.*}"
+            if [[ "$file" == luci-app-bandix.* ]]; then
+              if [[ "$extension" == "ipk" ]]; then
+                mv "$file" "${filename}_all.${extension}"
+                echo "Renamed: $file -> ${filename}_all.${extension}"
+              else
+                echo "Keep as-is: $file"
+              fi
+            elif [[ ! "$file" =~ _all\. ]]; then
               mv "$file" "${filename}_all.${extension}"
               echo "Renamed: $file -> ${filename}_all.${extension}"
             fi
           done
-          
+
           echo "status=success" >> $GITHUB_OUTPUT
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
       - name: Upload to release
-        uses: softprops/action-gh-release@v2
         if: steps.compile.outputs.status == 'success'
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{needs.job_check.outputs.luci-app-bandix_version}}
+          tag_name: v${{ needs.job_check.outputs.luci-app-bandix_version }}
           files: ${{ env.FIRMWARE }}/*
