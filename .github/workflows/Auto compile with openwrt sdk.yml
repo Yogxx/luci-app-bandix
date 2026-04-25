@@ -14,7 +14,7 @@ on:
         default: 'false'
 
 env:
-  TZ: Asia/Shanghai
+  TZ: Asia/Jakarta
   luci-app-bandix: ${{ github.repository }}
 
 jobs:
@@ -164,7 +164,7 @@ jobs:
           cd sdk
 
           # Generate .config
-          cat >> .config <<'EOF'
+          cat > .config <<'EOF'
           CONFIG_ALL_NONSHARED=n
           CONFIG_ALL_KMODS=n
           CONFIG_ALL=n
@@ -188,31 +188,9 @@ jobs:
           mkdir upload
           mv bin/packages/*/base/luci-app-bandix* upload/
           mv bin/packages/*/base/luci-i18n-bandix* upload/
-          cd upload
-
-          # Rename output files:
-          #   luci-app-bandix.apk       -> kept as-is
-          #   luci-app-bandix.ipk       -> luci-app-bandix_all.ipk
-          #   everything else           -> add _all suffix if missing
-          for file in *; do
-            [[ -f "$file" ]] || continue
-            extension="${file##*.}"
-            filename="${file%.*}"
-            if [[ "$file" == luci-app-bandix.* ]]; then
-              if [[ "$extension" == "ipk" ]]; then
-                mv "$file" "${filename}_all.${extension}"
-                echo "Renamed: $file -> ${filename}_all.${extension}"
-              else
-                echo "Keep as-is: $file"
-              fi
-            elif [[ ! "$file" =~ _all\. ]]; then
-              mv "$file" "${filename}_all.${extension}"
-              echo "Renamed: $file -> ${filename}_all.${extension}"
-            fi
-          done
 
           echo "status=success" >> $GITHUB_OUTPUT
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "FIRMWARE=$PWD/upload" >> $GITHUB_ENV
 
       - name: Upload to release
         if: steps.compile.outputs.status == 'success'
